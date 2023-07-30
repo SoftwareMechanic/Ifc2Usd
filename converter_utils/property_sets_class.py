@@ -12,10 +12,16 @@ class PropertySets():
             sort_keys=True, indent=4)
 
 class PropertySet():
-    def __init__(self, name):
-        self.name = name
-        self.properties = dict()
+    def __init__(self, guid, name):
+        self.GUID = guid
+        self.Name = name
+        self.Properties = []
 
-    
 
+class Property():
+    def __init__(self, name, type, unit, value):
+        self.Name = name
+        self.Type = type
+        self.Unit = unit
+        self.Value = value
     

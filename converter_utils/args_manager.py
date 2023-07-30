@@ -1,26 +1,29 @@
 import argparse
 
+
 class ArgsManager(object):
     def __new__(cls):
         if not hasattr(cls, 'instance'):
             cls.instance = super(ArgsManager, cls).__new__(cls)
         return cls.instance
-  
 
     def manage_arguments(self):
-        parser = argparse.ArgumentParser(description="Ifc2Usd helper",
-                                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        parser = argparse.ArgumentParser(
+            description='Ifc2Usd helper - Example usage: \r ifc2usd -f ["C:\path-to-ifc-file.ifc"] -o "/path/to/output.usd" ',
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
         parser.add_argument("-f",
                             "--files",
                             action="store",
-                            help="a list of file paths. example  ->   ifc2usd.exe --files ['file1.ifc','file2.ifc']",
+                            help="""a list of file paths.
+                            --files ['file1.ifc','file2.ifc']""",
                             required=True)
 
         parser.add_argument("-o",
                             "--output_file",
                             action="store",
-                            help="a valid path. example  ->   ifc2usd.exe --files ['file1.ifc','file2.ifc'] -o /path/to/output.usd",
+                            help="""a valid path.
+                            -o /path/to/output.usd""",
                             required=True)
 
         parser.add_argument("--angular_tolerance",
@@ -28,12 +31,36 @@ class ArgsManager(object):
                             help="angular tolerance float value.",
                             default="1.5",
                             required=False)
-
+        
         parser.add_argument("--deflection_tolerance",
                             action="store",
                             help="angular tolerance float value.",
                             default="0.1",
                             required=False)
+
+        parser.add_argument('--uvs',
+                            action='store_true',
+                            help="generate uvs in geometry mesh (except for Spaces and Openings)",
+                            default=False,
+                            required=False
+                            )
+        
+        
+        parser.add_argument('--colliders',
+                            action='store_true',
+                            default=False,
+                            required=False
+                            )
+        
+        parser.add_argument('--reuse_mesh_ref',
+                            action='store_true',
+                            default=False,
+                            required=False
+                            )
+        
+
+        
+
 
         args = parser.parse_args()
 
@@ -42,7 +69,20 @@ class ArgsManager(object):
         output_usd_file = str(config["output_file"])
         input_ifc_files = config["files"].replace("[", "").replace("]", "").split(",")
 
-        angular_tolerance = 2  # 1.5
-        deflection_tolerance = 0.14
+        angular_tolerance = float(config["angular_tolerance"])  # 2  # 1.5
+        deflection_tolerance = float(config["deflection_tolerance"])  # 0.14
 
-        return (input_ifc_files, output_usd_file, angular_tolerance, deflection_tolerance)
+        uvs = bool(config["uvs"])
+        colliders = bool(config["colliders"])
+        reuse_geometry = bool(config["reuse_mesh_ref"])
+
+        
+
+        return (
+            input_ifc_files,
+            output_usd_file,
+            angular_tolerance,
+            deflection_tolerance,
+            uvs,
+            colliders,
+            reuse_geometry)

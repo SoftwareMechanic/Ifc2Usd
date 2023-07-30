@@ -6,7 +6,8 @@ import ifcopenshell.util.element
 
 import multiprocessing
 
-from pxr import Usd, UsdGeom, Vt, Gf, Sdf, UsdShade
+from converter_utils.quantity_sets_class import QuantitySet, QuantityProperty, QuantitySets
+from converter_utils.property_sets_class import Property
 
 class IfcManager():
     def __init__(self, ifc_file_path, angular_tolerance, deflection_tolerance):
@@ -26,14 +27,13 @@ class IfcManager():
 
         self.geometry_guids_iterated = dict()
 
-        #self.project_units = self.get_ifc_projects()[0].UnitsInContext.Units
-
     def get_ifc_projects(self):
         return self.ifc_file.by_type('IfcProject')
-    
+
     def get_ifc_project_units_assignments(self, ifc_project):
+        
         return ifc_project.UnitsInContext.Units
-    
+
     def get_ifc_project_unit_type_assignment(self, unit_type):
         for unit in self.ifc_project.UnitsInContext.Units:
             # print(unit.UnitType)
@@ -64,7 +64,7 @@ class IfcManager():
         settings.set(settings.EXCLUDE_SOLIDS_AND_SURFACES, False)
         settings.set(settings.APPLY_LAYERSETS, True)
         settings.set(settings.LAYERSET_FIRST, False)
-        settings.set(settings.NO_NORMALS, True)
+        settings.set(settings.NO_NORMALS, False)
         settings.set(settings.GENERATE_UVS, True)
         settings.set(settings.EDGE_ARROWS, False)
         settings.set(settings.SITE_LOCAL_PLACEMENT, True)
@@ -103,17 +103,13 @@ class IfcManager():
         verts = shape.geometry.verts
 
         if (self.geometry_guids_iterated.get(guid) != None):  
-       
             print("Found duplicate guid in geometry iterator, probably with different geometry data")
             if len(verts) > len(self.geometry_guids_iterated[guid]):
                 self.geometry_guids_iterated[guid] = verts
             else:
                 return
-           
+
         self.geometry_guids_iterated[guid] = verts
-
-
-        
 
         matrix = list(shape.transformation.matrix.data)
 
@@ -121,84 +117,170 @@ class IfcManager():
         materials = shape.geometry.materials
         materials_ids = shape.geometry.material_ids
 
+
+        uvs = shape.geometry.uvs()
+        
         ifc_type = shape.product.is_a()
 
-        return (guid, ifc_type, faces, verts, matrix, materials, materials_ids)
-
+        return (guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs)
 
     # PropertySet
-    def get_element_properties(self,ifc_property_set, prim, namespace):
-        element_properties = dict()
+    def get_element_properties(self, ifc_property_set):
+        #element_properties = dict()
+        element_properties = []
+       
+        if hasattr(ifc_property_set, 'HasProperties') is False:
+            return None
         for prop in ifc_property_set.HasProperties:
+            # TODO: manage in the pset class also the type of the property?
+            # this could help in improve UI relative to property in externals softwares
+            
             if prop.is_a('IfcPropertySingleValue'):
-                element_properties[prop.Name] =  str(prop.NominalValue) # if prop.NominalValue is None else str(prop.NominalValue.wrappeValue)
-
-            else:
-                print("Not an IfcPropertySingleValue, ", prop.is_a())
-                #for prop in dir(ifc_property_set):
-                    #print(prop, " ", getattr(ifc_property_set, prop))
+                # Also here we need to check the property type of the value it could be electric value or length value
                 
+                nominal_value_info = prop.NominalValue.get_info() if prop.NominalValue is not None else dict()
+                wrapped_value = str(nominal_value_info.get("wrappedValue"))  or ""
+                value_type = nominal_value_info.get("type") or ""
+                value_unit = ""
 
+                if value_type.endswith('Measure'):
+                    value_unit =  self.from_measure_to_unit(value_type)
+
+                #element_properties[prop.Name] = wrapped_value
+                property = Property(prop.Name, value_type, value_unit, wrapped_value  )
+                element_properties.append(property)
+
+            elif prop.is_a('IfcPropertyEnumeratedValue'):
+                enumerated_prop_info = prop.get_info()
+                enumeration_name = enumerated_prop_info["Name"]
+                value_type = enumerated_prop_info["type"]
+
+                values = ""
+                for value in enumerated_prop_info["EnumerationValues"]:
+                    prop_value = value.get_info().get("wrappedValue", "")
+                    values += f"{prop_value}, "
+
+                values = values.removesuffix(", ")
+                #element_properties[prop.Name] = values
+
+                property = Property(prop.Name, value_type, "", values)
+                element_properties.append(property)
+
+
+            elif prop.is_a('IfcPropertyBoundedValue'):
+                bounded_property_info = prop.get_info()
+
+                lower_bound_value = bounded_property_info["LowerBoundValue"]
+                upper_bound_value = bounded_property_info["UpperBoundValue"]
+                value_type = ""
+                unit = ""
+
+                if lower_bound_value is None:
+                    lower_bound_value = "NOT DEFINED"
+                else:
+                    value_info = lower_bound_value.get_info()
+                    wrapped_value = str(value_info["wrappedValue"])
+                    value_type = str(value_info["type"])
+                    unit = self.from_measure_to_unit(value_type)
+
+                   
+                    upper_bound_value = str(wrapped_value)
+                if upper_bound_value is None:
+                    upper_bound_value = "NOT DEFINED"
+                else:
+                    value_info = upper_bound_value.get_info()
+                    wrapped_value = str(value_info["wrappedValue"])
+                    value_type = str(value_info["type"])
+                    unit = self.from_measure_to_unit(value_type)
+
+                    upper_bound_value = str(wrapped_value)
+
+                prop_value = f"{lower_bound_value} , {upper_bound_value}"
+                # element_properties[prop.Name] = prop_value
+
+                property = Property(prop.Name, value_type, "", prop_value)
+                element_properties.append(property)
+
+            elif prop.is_a("IfcPropertyListValue"):
+                values = ""
+                value_type = ""
+                unit = ""
+                for value in prop.ListValues:
+                    prop_value_info = value.get_info()
+                    wrapped_value = str(prop_value_info.get("wrappedValue", ""))
+                    value_type = prop_value_info.get("type") or ""
+                    unit = self.from_measure_to_unit(value_type)
+
+                    values += f"{wrapped_value}, "
+
+                values = values.removesuffix(", ")
+                #element_properties[prop.Name] = values
+                property = Property(prop.Name, value_type, "", values)
+                element_properties.append(property)
+            else:
+                print("Unknown property type -> ", prop.is_a())
+        
         return element_properties
 
-
-    def get_element_quantities(self,quantity_set, prim, namespace):
-        element_quantities = dict()
+    def get_element_quantities(self, quantity_set):
+        # element_quantities = dict()
+        quantity_set_instance = QuantitySet(quantity_set.Name)
+        
         for quantity in quantity_set.Quantities:
+            
             if quantity.is_a('IfcQuantityLength'):
                 unit = self.get_ifc_project_unit_type_assignment("LENGTHUNIT")
                 symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-                element_quantities[quantity.Name] = str(quantity.LengthValue) + " " + symbol
+
+                quantity_property = QuantityProperty(quantity.Name, "IfcQuantityLength", symbol, str(quantity.LengthValue))
+                quantity_set_instance.Properties.append(quantity_property)
             elif quantity.is_a('IfcQuantityArea'):
                 unit = self.get_ifc_project_unit_type_assignment("AREAUNIT")
                 symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-                element_quantities[quantity.Name] = str(quantity.AreaValue) + " " + symbol
+                quantity_property = QuantityProperty(quantity.Name, "IfcQuantityArea", symbol, str(quantity.AreaValue))
+                quantity_set_instance.Properties.append(quantity_property)
             elif quantity.is_a('IfcQuantityVolume'):
                 unit = self.get_ifc_project_unit_type_assignment("VOLUMEUNIT")
                 symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-                element_quantities[quantity.Name] = str(quantity.VolumeValue) + " " + symbol
+                quantity_property = QuantityProperty(quantity.Name, "IfcQuantityVolume", symbol, str(quantity.VolumeValue))
+                quantity_set_instance.Properties.append(quantity_property)
             elif quantity.is_a('IfcQuantityCount'):
-                # unit = self.get_ifc_project_unit_type_assignment("VOLUMEUNIT")
-                # symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-                element_quantities[quantity.Name] = str(quantity.CountValue) # + " " + symbol
+                quantity_property = QuantityProperty(quantity.Name, "IfcQuantityCount", "", str(quantity.CountValue))
+                quantity_set_instance.Properties.append(quantity_property)
             elif quantity.is_a('IfcQuantityWeight'):
                 unit = self.get_ifc_project_unit_type_assignment("MASSUNIT")
                 symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-                element_quantities[quantity.Name] = str(quantity.WeightValue) + " " + symbol
-
-                print("Part of complex, ", quantity.PartOfComplex)
-                print("unit -> ", quantity.Unit)
+                # element_quantities[quantity.Name] = str(quantity.WeightValue) + " " + symbol
+                quantity_property = QuantityProperty(quantity.Name, "IfcQuantityWeight", symbol, str(quantity.WeightValue))
+                quantity_set_instance.Properties.append(quantity_property)
 
             else:
                 print("Unknown quantity type")
                 print(quantity.is_a())
-                for attr in dir(quantity):
-                    print(getattr(quantity, ", ", attr))
-                print(dir(quantity))
-                element_quantities[quantity.Name] = ""
+                # for attr in dir(quantity):
+                #     print(getattr(quantity, ", ", attr))
+                # print(dir(quantity))
+                # element_quantities[quantity.Name] = ""
                 # print(quantity.Name)
 
-            #add quantity suffix symbol
-            element_quantities[quantity.Name] += ' ' + self.get_unit_prefix_symbol(quantity)  + self.get_unit_name_symbol(quantity)
-
-        return element_quantities
+            #add quant ity suffix symbol
+            # element_quantities[quantity.Name] += ' ' + self.get_unit_prefix_symbol(quantity)  + self.get_unit_name_symbol(quantity)
         
+        # Here I could return just quantity_set.Quantities instead of cycle them, but Unit is null everytime
+        return quantity_set_instance
 
-    def get_element_type(self,type, usd_prim):
+    def get_element_type(self, type):
         element_name = dict()
         element_name["name"] = type.Name
-        
         return element_name
-
 
     def get_element_ifc_type(self, ifc_element):
         element_type = dict()
         element_type["type"] = ifc_element.is_a()
         return element_type
-    
 
     def get_unit_prefix_symbol(self, quantity):
-        unit_prefix = None if hasattr(quantity, "Prefix") is False else quantity.Prefix 
+        unit_prefix = None if hasattr(quantity, "Prefix") is False else quantity.Prefix
         match unit_prefix:
             case "EXA":
                 return "E"
@@ -239,6 +321,8 @@ class IfcManager():
 
     def get_unit_name_symbol(self, quantity):
         unit_name = None if hasattr(quantity, "Name") is False else quantity.Name 
+        if unit_name is None:
+            return ""
         match unit_name:
             case "METRE":
                 return "m"
@@ -271,6 +355,51 @@ class IfcManager():
             case "DEGREE":
                 return "°"
             case _:
+                print("Unmanaged symbol for unit name: ", unit_name)
                 return ""
 
-    
+    def from_measure_to_unit(self, measure_type):
+        unit = ""
+        symbol = ""
+        match measure_type:
+            # Electrical measures
+            case "IfcElectricCurrentMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("ELECTRICCURRENTUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcElectricResistanceMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("ELECTRICRESISTANCEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcElectricVoltageMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("ELECTRICVOLTAGEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcPowerMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("POWERUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+
+             # Space measures
+            case "IfcVolumeMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("VOLUMEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcLengthMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("LENGHTUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcAreaMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("AREAUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+
+            case "IfcPlaneAngleMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("PLANEANGLEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcThermodynamicTemperatureMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("THERMODYNAMICTEMPERATUREUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcThermalTransmittanceMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("THERMALTRANSMITTANCEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case "IfcVolumetricFlowRateMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("VOLUMETRICFLOWRATEUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
+            case _:
+                print("Unmanaged measure: ", measure_type)
+
+        return symbol
