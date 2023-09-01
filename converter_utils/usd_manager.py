@@ -31,6 +31,9 @@ class UsdManager():
 
     # create a prim/node container inside world prim
     def define_container_prim(self, name):
+        """
+        create a prim/node container inside world prim
+        """
         world_path = str(self.world_prim.GetPath())
         container_prim_name = self.get_safe_prim_name(name)
         prim_path = world_path + container_prim_name
@@ -41,11 +44,17 @@ class UsdManager():
         self.guids_prims_dict = dict()
 
     def find_mesh_parent_prim_path(self, name):
+        """
+        get the reference prim stored using name (unique ID) as key
+        """
         reference_prim = self.guids_prims_dict[name]
         reference_path = str(reference_prim.GetPath())
         return reference_path
 
     def create_prim(self, parent_prim, guid, prim_name, type="Xform"):
+        """
+        create a prim given the parent, and store it s reference using a guid or unique  ID as key
+        """
         parent_path = str(parent_prim.GetPath())
         safe_prim_name = self.get_safe_prim_name(prim_name)
         prim_complete_name = parent_path + safe_prim_name
@@ -54,6 +63,9 @@ class UsdManager():
         return prim
 
     def reuse_usd_mesh(self, name, mesh_to_reuse_prim_path):
+        """
+        reference an identical mesh (with same geometry) already created in USD for another object.
+        """
         mesh_reference_path = self.find_mesh_parent_prim_path(name)
         mesh_prim = UsdGeom.Mesh.Define(self.stage, mesh_reference_path + "/Mesh_")
         mesh_prim.GetPrim().GetReferences().AddInternalReference(mesh_to_reuse_prim_path)
@@ -63,6 +75,9 @@ class UsdManager():
 
 
     def set_usd_mesh(self, mesh, faces, vertices, matrix_4x4, uvs):
+        """
+        given a USD mesh, set its faces vertices matrix and uvs
+        """
         mesh_path = mesh.GetPath()
         mesh_prim = self.stage.GetPrimAtPath(mesh_path)
 
@@ -75,12 +90,18 @@ class UsdManager():
         return mesh
 
     def create_usd_mesh_(self, name):
+        """
+        create a usd mesh given a unique ID in order to find the corresponding parent prim.
+        """
         mesh_reference_path = self.find_mesh_parent_prim_path(name)
         mesh = UsdGeom.Mesh.Define(self.stage, mesh_reference_path + "/Mesh_")
 
         return mesh
 
     def assign_transform_matrix(self, prim, matrix_4x4):
+        """
+        Assign the 4x4 matrix to the given prim
+        """
         # Create an Xform matrix
         xform_matrix = Gf.Matrix4d(
             *matrix_4x4
@@ -93,6 +114,9 @@ class UsdManager():
         xformable.MakeMatrixXform().Set(xform_matrix)
 
     def generate_uvs(self, mesh, uvs):
+        """
+        elaborate the UVS and set on top of the relative given mesh.
+        """
         uvs_tuple = tuple(
             uvs[e:e + 2] for e, k in enumerate(uvs) if e % 2 == 0)
 
@@ -135,25 +159,29 @@ class UsdManager():
         surfaceShader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(material_color))
         surfaceShader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(alpha)  # Set the opacity value for transparency
 
+        if material_name is "transparent":
+            surfaceShader.CreateInput("opacityThreshold", Sdf.ValueTypeNames.Float).Set(0.1)  # Set the opacity Threshold value 
+
         # Connect the surface shader to the material's surface output
         # Assign the material to the mesh
         material.CreateSurfaceOutput().ConnectToSource(surfaceShader.ConnectableAPI(), "surface")
         UsdShade.MaterialBindingAPI(usd_mesh).Bind(material)
 
-    def assign_mesh_subset_material(self, usd_mesh, material_name, material_color, alpha, material_start_index_face_indices, material_indices_count):
+    def assign_mesh_subset_material(self, usd_mesh, material_name, material_color, material_texture, alpha, material_start_index_face_indices, material_indices_count):
         # Define the material TODO: check if already exist
         material_container_path = str(self.material_container_prim.GetPath())
         material_prim_name = self.get_safe_prim_name(material_name)
         material_path = material_container_path + material_prim_name
-       
+
         material = UsdShade.Material.Define(self.stage,  material_path)
 
-        # Create a new network for each material
-        network = UsdShade.Shader.Define(self.stage, f"{material_path}/Network")
+        # Create a new pbr shader for each material
+        network = UsdShade.Shader.Define(self.stage, f"{material_path}/PBR_Shader")
         network.CreateIdAttr("UsdPreviewSurface")
 
         usd_diffuse = network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f)
         usd_diffuse.Set(material_color)
+        # Manage roughness and metallic TODO
 
         usd_opacity = network.CreateInput("opacity", Sdf.ValueTypeNames.Float)
         usd_opacity.Set(alpha)  # Set the opacity value for transparency
@@ -177,7 +205,7 @@ class UsdManager():
                     material_start_index_face_indices + material_indices_count
                     )
                 )
-            
+
             subset_indices.extend(subset_indices_to_merge)
             UsdGeom.Subset(subset).CreateIndicesAttr(subset_indices)
         else:
@@ -192,6 +220,46 @@ class UsdManager():
             subset.CreateElementTypeAttr(UsdGeom.Tokens.face)
             material.CreateSurfaceOutput().ConnectToSource(network.ConnectableAPI(), "surface")
             UsdShade.MaterialBindingAPI(subset.GetPrim()).Bind(material)
+
+        if (material_texture is not None):
+            self.set_texture(usd_mesh, material_texture, material_path, material, network)
+
+    # example
+    def set_texture(self, usd_mesh, material_texture, material_path, material, network):
+        """
+        Check if for a material created in USD has a 'stReader' in order to\n
+        be able to apply the texture to the mesh
+        """
+        texture_prim_path = f"{material_path}/stReader"
+        texture_prim = self.stage.GetPrimAtPath(texture_prim_path)
+
+        if texture_prim.IsValid():
+            usd_mesh.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)
+            UsdShade.MaterialBindingAPI(usd_mesh.GetPrim()).Bind(material)
+        else:
+            stReader = UsdShade.Shader.Define(self.stage, f"{material_path}/stReader")
+            stReader.CreateIdAttr('UsdPrimvarReader_float2')
+
+            diffuse_texture = self.stage.GetPrimAtPath(f"{material_path}/diffuseTexture")
+
+            if diffuse_texture.IsValid() is False:
+                diffuseTextureSampler = UsdShade.Shader.Define(self.stage, f"{material_path}/diffuseTexture")
+                diffuseTextureSampler.CreateIdAttr('UsdUVTexture')
+                diffuseTextureSampler.CreateInput('file', Sdf.ValueTypeNames.Asset).Set(material_texture)
+                diffuseTextureSampler.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(stReader.ConnectableAPI(), 'result')
+                diffuseTextureSampler.CreateOutput('rgb', Sdf.ValueTypeNames.Float3)
+                diffuseTextureSampler.CreateInput('wrapS', Sdf.ValueTypeNames.String).Set('repeat')
+                diffuseTextureSampler.CreateInput('wrapT', Sdf.ValueTypeNames.String).Set('repeat')
+
+                network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(diffuseTextureSampler.ConnectableAPI(), 'rgb')
+
+                stInput = material.CreateInput("frame:stPrimVarName", Sdf.ValueTypeNames.Token)
+                stInput.Set('st')
+                stReader.CreateInput('varname', Sdf.ValueTypeNames.Token).ConnectToSource(stInput)
+
+                usd_mesh.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)
+                UsdShade.MaterialBindingAPI(usd_mesh.GetPrim()).Bind(material)
+
 
     def set_mesh_transform(mesh, transform_matrix):
         mesh_transform = UsdGeom.Xformable(mesh)

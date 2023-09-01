@@ -12,6 +12,7 @@ from converter_utils.property_sets_class import Property
 class IfcManager():
     def __init__(self, ifc_file_path, angular_tolerance, deflection_tolerance):
         # pass
+        self.ifc_file_path = ifc_file_path
         self.ifc_file = self.open_ifc_file(ifc_file_path)
         self.ifc_project = None
 
@@ -31,19 +32,27 @@ class IfcManager():
         return self.ifc_file.by_type('IfcProject')
 
     def get_ifc_project_units_assignments(self, ifc_project):
-        
         return ifc_project.UnitsInContext.Units
 
     def get_ifc_project_unit_type_assignment(self, unit_type):
+        """
+        Given a IfcUnit returns just the unit used by the IfcProject
+        """
         for unit in self.ifc_project.UnitsInContext.Units:
             # print(unit.UnitType)
-            if unit.UnitType == unit_type: #LENGTHUNIT, MASSUNIT etc...
-                return unit
+            try:
+                if unit.UnitType == unit_type: #LENGTHUNIT, MASSUNIT etc...
+                    return unit
+            except:
+                pass
 
     def open_ifc_file(self, path):
         return ifcopenshell.open(path)
 
     def set_ifc_geometry_settings(self, angular_tolerance, deflection_tolerance):
+        """
+        Prepare the settings for the geometry iteration process.
+        """
         settings = ifcopenshell.geom.settings()
         settings.set_angular_tolerance(angular_tolerance)
         settings.set_deflection_tolerance(deflection_tolerance)
@@ -62,7 +71,10 @@ class IfcManager():
         # shapes with more vertices, if I exclude, I get colors issue in some cases
         settings.set(settings.INCLUDE_CURVES, True)
         settings.set(settings.EXCLUDE_SOLIDS_AND_SURFACES, False)
-        settings.set(settings.APPLY_LAYERSETS, True)
+        # if APPLY_LAYERSETS is false and LAYERSET_FIRST is true, it happened that I can not retrieve the texture, Instead I can get them if set to opposites,
+        # but with a model I tried the texture of a wall also occupy the space of openings (door, window).
+        # TODO: test with other IFC files with textures and TODO maybe manage a new argument for this program in order to let the used decide
+        settings.set(settings.APPLY_LAYERSETS, True) 
         settings.set(settings.LAYERSET_FIRST, False)
         settings.set(settings.NO_NORMALS, False)
         settings.set(settings.GENERATE_UVS, True)
@@ -77,19 +89,24 @@ class IfcManager():
         settings.set(settings.DEBUG_BOOLEAN, False)
 
         return settings
-        
 
-    def set_ifc_geometry_iterator(self,settings, ifc_file):
+    def set_ifc_geometry_iterator(self, settings, ifc_file):
+        """
+        Prepare the geometry iterator for the relative IFC file with relative settings.
+        """
         iterator = ifcopenshell.geom.iterator(
             settings,
             ifc_file,
             multiprocessing.cpu_count()
         )
         return iterator
-    
 
     def get_ifc_mesh_info(self, ifc_geometry_iterator):
-         # Get ifc object
+        """
+        Get the necessary mesh information as follows:\n
+        guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs
+        """
+        # Get ifc object
         shape = self.geometry_iterator.get()
         # Get GUID of ifc object
         guid = shape.guid
@@ -124,9 +141,10 @@ class IfcManager():
 
         return (guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs)
 
-    # PropertySet
     def get_element_properties(self, ifc_property_set):
-        #element_properties = dict()
+        """
+        return the element properties of the given property set.
+        """
         element_properties = []
        
         if hasattr(ifc_property_set, 'HasProperties') is False:
@@ -223,7 +241,9 @@ class IfcManager():
         return element_properties
 
     def get_element_quantities(self, quantity_set):
-        # element_quantities = dict()
+        """
+        return the element properties of the given quantity set.
+        """
         quantity_set_instance = QuantitySet(quantity_set.Name)
         
         for quantity in quantity_set.Quantities:
@@ -280,6 +300,9 @@ class IfcManager():
         return element_type
 
     def get_unit_prefix_symbol(self, quantity):
+        """
+        given a quantity returns the unit prefix in short way (e.g. if the quantity prefix is KILO returns k).
+        """
         unit_prefix = None if hasattr(quantity, "Prefix") is False else quantity.Prefix
         match unit_prefix:
             case "EXA":
@@ -320,6 +343,9 @@ class IfcManager():
                 return ""
 
     def get_unit_name_symbol(self, quantity):
+        """
+        given a quantity returns the unit name in short way (e.g. if the quantity prefix is METRE returns m).
+        """
         unit_name = None if hasattr(quantity, "Name") is False else quantity.Name 
         if unit_name is None:
             return ""
@@ -359,6 +385,9 @@ class IfcManager():
                 return ""
 
     def from_measure_to_unit(self, measure_type):
+        """
+        given an IFC measure type return the relative symbol/unit (e.g. if the measure is 'IfcPowerMeasure' based on IfcProject this could return KW (kilowatt)).
+        """
         unit = ""
         symbol = ""
         match measure_type:

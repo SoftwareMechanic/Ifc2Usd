@@ -3,6 +3,7 @@ from converter_utils.quantity_sets_class import QuantitySets
 from converter_utils.usd_manager import UsdManager
 
 import os
+import shutil
 
 from converter_utils.property_sets_class import PropertySet, PropertySets
 from converter_utils.object_type_class import ObjectInfo
@@ -12,6 +13,7 @@ class Ifc2UsdManager():
     def __init__(self, usd_output_path, generate_uvs, generate_colliders, reuse_geometry):
         self.ifc_manager = None
         self.usd_manager = UsdManager(usd_output_path)
+        
 
         self.ifc_types_and_counters = dict()
 
@@ -19,13 +21,16 @@ class Ifc2UsdManager():
         self.base_namespace = "IFC"
         self.property_sets_namespace = f"{self.base_namespace}{self.usd_namespace_delimiter}property_sets"
         self.quantity_sets_namespace = f"{self.base_namespace}{self.usd_namespace_delimiter}quantity_sets"
-
+        self.usd_output_path = usd_output_path
         # Dict initialized for reuse geometry
         self.verts_and_relative_usd_mesh_path = dict()
 
         self.generate_uvs = generate_uvs
         self.generate_colliders = generate_colliders
         self.reuse_geometry = reuse_geometry
+        
+
+
 
     def convert_ifc_to_usd(self, ifc_file_path, angular_tolerance, deflection_tolerance):
         self.usd_manager.clear_prims_reference()
@@ -103,13 +108,14 @@ class Ifc2UsdManager():
     def manage_mesh_material(self, ifc_type, materials, materials_ids, usd_mesh):
         if ifc_type == "IfcOpeningElement" or ifc_type == "IfcSpace":
             self.usd_manager.assign_mesh_material(usd_mesh, "transparent", [0.0, 0.0, 0.0], 0.0)
-
         else:
             if len(materials) == 1:
                 material = materials[0]
-                material_name = material.name
+                material_name = material.original_name()
                 material_color = material.diffuse
                 material_transparency = 1.0
+
+                print(dir(material))
 
                 if material.has_transparency:
                     material_transparency = 1 - material.transparency
@@ -121,6 +127,7 @@ class Ifc2UsdManager():
 
                 material_start_index_faces_indices = 0
                 for material_id_and_count in materials_ids_and_counts:
+                    
                     material_id = material_id_and_count[0]
                     material_count = material_id_and_count[1]
                     material = materials[material_id]
@@ -129,9 +136,24 @@ class Ifc2UsdManager():
                     if material.has_transparency:
                         material_transparency = 1 - material.transparency
 
-                    self.usd_manager.assign_mesh_subset_material(usd_mesh, material.name, material.diffuse, material_transparency, material_start_index_faces_indices, material_count )
+                    texture_name = self.get_relative_texture_if_available(material.original_name())
+                    relative_texture_path = self.get_relative_texture_path(texture_name)
+
+                    self.usd_manager.assign_mesh_subset_material(usd_mesh, material.original_name(), material.diffuse, relative_texture_path, material_transparency, material_start_index_faces_indices, material_count )
 
                     material_start_index_faces_indices += material_count
+
+    def get_relative_texture_path(self, texture_name):
+        relative_texture_path = None
+
+        if texture_name is not None:
+            relative_texture_path = "textures/" + texture_name 
+            ifc_directory = os.path.dirname(self.ifc_manager.ifc_file_path)
+            usd_output_directory = os.path.dirname(self.usd_output_path)
+            texture_file_path = f"{ifc_directory}/{texture_name}"
+            os.makedirs(f"{usd_output_directory}/textures", exist_ok=True)
+            shutil.copy(texture_file_path, f"{usd_output_directory}/textures/{texture_name}")
+        return relative_texture_path
 
     def create_ifc_hierarchy_in_usd(self, model_prim, usd_stage):
         ifc_projects = self.ifc_manager.get_ifc_projects()
@@ -344,3 +366,18 @@ class Ifc2UsdManager():
         matrix.insert(11, 0)
         matrix.insert(15, 1)
         return matrix
+
+    def get_relative_texture_if_available(self, material_name):
+        # here we check if in the same directory of IFC file there is an image/texture
+        # that has the same name of the material passed as parameter
+        # if there is, theorically this texture should be the one assigned to objects with this material
+
+        # TODO: check if there is another more clear way to know if a ifc material has a related texture
+        file_directory = os.path.dirname(self.ifc_manager.ifc_file_path)
+        files_and_directories = os.listdir(file_directory)
+
+        texture_file_path = [x for x in files_and_directories if x.startswith(material_name)]
+        if len(texture_file_path) == 0:
+            return None
+        else:
+            return texture_file_path[0]
