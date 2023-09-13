@@ -112,10 +112,12 @@ class Ifc2UsdManager():
             if len(materials) == 1:
                 material = materials[0]
                 material_name = material.original_name()
+                if (material_name == "" or material_name is None):
+                    material_name = "undefined"
                 material_color = material.diffuse
                 material_transparency = 1.0
 
-                print(dir(material))
+                #print(dir(material))
 
                 if material.has_transparency:
                     material_transparency = 1 - material.transparency
@@ -127,7 +129,6 @@ class Ifc2UsdManager():
 
                 material_start_index_faces_indices = 0
                 for material_id_and_count in materials_ids_and_counts:
-                    
                     material_id = material_id_and_count[0]
                     material_count = material_id_and_count[1]
                     material = materials[material_id]
@@ -313,6 +314,8 @@ class Ifc2UsdManager():
             # print(ifc_element.is_a(), " IfcSpatialStructureElement:")
             for rel in ifc_element.ContainsElements:
                 relatedElements = rel.RelatedElements
+                if relatedElements is None:
+                    continue
                 for child in relatedElements:
                     prim_as_parent = prim
                     self._create_ifc_hierarchy_in_usd(child,  prim_as_parent, stage)        
@@ -321,6 +324,8 @@ class Ifc2UsdManager():
             # print(ifc_element.is_a(), " IfcObjectDefinition:")
             for rel in ifc_element.IsDecomposedBy:
                 relatedObjects = rel.RelatedObjects
+                if relatedObjects is None:
+                    continue
                 for child in relatedObjects:
                     self._create_ifc_hierarchy_in_usd(child,  prim, stage)
         # check for openings
