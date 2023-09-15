@@ -1,5 +1,5 @@
 import argparse
-
+import os
 
 class ArgsManager(object):
     def __new__(cls):
@@ -11,13 +11,21 @@ class ArgsManager(object):
         parser = argparse.ArgumentParser(
             description='Ifc2Usd helper - Example usage: \r ifc2usd -f ["C:\path-to-ifc-file.ifc"] -o "/path/to/output.usd" ',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        
 
-        parser.add_argument("-f",
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument("-f",
                             "--files",
                             action="store",
                             help="""a list of file paths.
-                            --files ['file1.ifc','file2.ifc']""",
-                            required=True)
+                            --files ['file1.ifc','file2.ifc']
+                            if this parameter is used, the '--folder' parameter must be omitted.""")
+        
+        group.add_argument("-fo",
+                            "--folder",
+                            action="store",
+                            help="""a folder path containing all the ifc files,
+                            if this parameter is used, the '--files' parameter must be omitted.""")
 
         parser.add_argument("-o",
                             "--output_file",
@@ -31,7 +39,7 @@ class ArgsManager(object):
                             help="angular tolerance float value.",
                             default="1.5",
                             required=False)
-        
+
         parser.add_argument("--deflection_tolerance",
                             action="store",
                             help="angular tolerance float value.",
@@ -40,34 +48,49 @@ class ArgsManager(object):
 
         parser.add_argument('--uvs',
                             action='store_true',
-                            help="generate uvs in geometry mesh (except for Spaces and Openings)",
+                            help="generate uvs in usd geometry mesh (except for IfcSpaces and IfcOpenings)",
                             default=False,
                             required=False
                             )
-        
-        
+
         parser.add_argument('--colliders',
                             action='store_true',
+                            help="generate colliders in usd geometry mesh",
                             default=False,
                             required=False
                             )
         
         parser.add_argument('--reuse_mesh_ref',
                             action='store_true',
+                            help=
+                            """
+                            use usd references to reuse meshes with same geometry
+                            !!should be validated by an expert in USD!!
+                            is the reusing of meshes working as expected?
+                            The doubt comes from file size, shouldn't be significantly smaller where reusing lots of meshes?
+                            in a test made with GLTF format, reusing the mesh buffer multiple times, decrease the size by a lot!
+                            """,
                             default=False,
                             required=False
                             )
-        
-
-        
-
 
         args = parser.parse_args()
 
         config = vars(args)
 
         output_usd_file = str(config["output_file"])
-        input_ifc_files = config["files"].replace("[", "").replace("]", "").split(",")
+        input_ifc_files = []
+        folder = config["folder"]
+        if (folder is not None):
+            for root, dirs, files in os.walk(folder):
+                for file in files:
+                    if file.lower().endswith('.ifc'):
+                        input_ifc_files.append(folder + "/" + file)
+        
+
+       
+        if input_ifc_files is None or len(input_ifc_files) == 0:
+            input_ifc_files = config["files"].replace("[", "").replace("]", "").split(",")
 
         angular_tolerance = float(config["angular_tolerance"])  # 2  # 1.5
         deflection_tolerance = float(config["deflection_tolerance"])  # 0.14

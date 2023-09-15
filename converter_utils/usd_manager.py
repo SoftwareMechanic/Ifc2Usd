@@ -148,6 +148,7 @@ class UsdManager():
     def assign_mesh_material(self, usd_mesh, material_name, material_color, alpha):
         # Create a transparent material for the mesh
         material_container_path = str(self.material_container_prim.GetPath())
+        
         safe_material_name = self.get_safe_prim_name(material_name)
         material_path = material_container_path + safe_material_name
         material = UsdShade.Material.Define(self.stage,  material_path)

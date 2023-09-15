@@ -5,6 +5,7 @@ import ifcopenshell.util
 import ifcopenshell.util.element
 
 import multiprocessing
+import os
 
 from converter_utils.quantity_sets_class import QuantitySet, QuantityProperty, QuantitySets
 from converter_utils.property_sets_class import Property
@@ -14,6 +15,7 @@ class IfcManager():
         # pass
         self.ifc_file_path = ifc_file_path
         self.ifc_file = self.open_ifc_file(ifc_file_path)
+        self.ifc_file_name = os.path.basename(ifc_file_path)
         self.ifc_project = None
 
         self.geometry_settings = self.set_ifc_geometry_settings(
@@ -27,6 +29,8 @@ class IfcManager():
         )
 
         self.geometry_guids_iterated = dict()
+
+        print("openshell v: " + ifcopenshell.version)
 
     def get_ifc_projects(self):
         return self.ifc_file.by_type('IfcProject')

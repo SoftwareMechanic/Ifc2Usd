@@ -51,6 +51,7 @@ class Ifc2UsdManager():
             try:
                 while True:
                     ifc_mesh_info = self.ifc_manager.get_ifc_mesh_info(ifc_geometry_iterator)
+                    print("Mesh info: ", ifc_mesh_info)
 
                     if (ifc_mesh_info is None):
                         if not ifc_geometry_iterator.next():
@@ -114,9 +115,10 @@ class Ifc2UsdManager():
                 material_name = material.original_name()
                 if (material_name == "" or material_name is None):
                     material_name = "undefined"
+
+                material_name = self.ifc_manager.ifc_file_name + "_" + material_name
                 material_color = material.diffuse
                 material_transparency = 1.0
-
                 #print(dir(material))
 
                 if material.has_transparency:
@@ -310,6 +312,17 @@ class Ifc2UsdManager():
 
         #-----------------------HIERARCHY CONSTRUCTION -----------------------
         # follow Spatial relation
+
+        # for attr in dir(ifc_element):
+        #     try:
+        #         print(attr + "," + str(getattr(ifc_element, attr)))
+        #     except:
+        #         pass
+            #print(getattr(ifc_element,  attr))
+
+        products = self.ifc_manager.ifc_file.by_type("IfcProduct")
+        print(products)
+
         if (ifc_element.is_a('IfcSpatialStructureElement')):
             # print(ifc_element.is_a(), " IfcSpatialStructureElement:")
             for rel in ifc_element.ContainsElements:
