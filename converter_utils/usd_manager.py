@@ -1,5 +1,6 @@
 from pxr import Usd, UsdGeom, Vt, Gf, Sdf, UsdShade, UsdPhysics
 import re
+
 from unidecode import unidecode
 
 
@@ -81,11 +82,15 @@ class UsdManager():
         mesh_path = mesh.GetPath()
         mesh_prim = self.stage.GetPrimAtPath(mesh_path)
 
+
+       
         self.generate_mesh_vertices(mesh, vertices)
         self.generate_mesh_indices(mesh, faces)
         self.assign_transform_matrix(mesh_prim, matrix_4x4)
         self.generate_collider(mesh_prim)
         self.generate_uvs(mesh, uvs)
+
+        
 
         return mesh
 
@@ -117,12 +122,14 @@ class UsdManager():
         """
         elaborate the UVS and set on top of the relative given mesh.
         """
+
         uvs_tuple = tuple(
             uvs[e:e + 2] for e, k in enumerate(uvs) if e % 2 == 0)
 
         texCoords = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("st",
                                                             Sdf.ValueTypeNames.TexCoord2fArray,
-                                                            UsdGeom.Tokens.varying)
+                                                            UsdGeom.Tokens.faceVarying)
+        
         texCoords.Set(uvs_tuple)
 
     def generate_collider(self, mesh_prim):
@@ -134,7 +141,20 @@ class UsdManager():
         # from list vertices to tuples of 3 elements
         vertices_tuple = tuple(
             vertices[e:e + 3] for e, k in enumerate(vertices) if e % 3 == 0)
+        
         mesh.CreatePointsAttr().Set(Vt.Vec3fArray(vertices_tuple))
+
+    def generate_mesh_normals(self, mesh, normals):
+        # from list vertices to tuples of 3 elements
+        vertices_tuple = [tuple(normals[e:e + 3]) for e, k in enumerate(normals) if e % 3 == 0]
+        normals_primvar = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("normals",
+                                   Sdf.ValueTypeNames.Normal3fArray,
+                                   UsdGeom.Tokens.faceVarying)
+        
+
+        UsdGeom.Mesh.CreateSubdivisionSchemeAttr(mesh, "bilinear")
+        
+        normals_primvar.Set(Vt.Vec3fArray(vertices_tuple))# Gf.Vec3f(vertices_tuple), [])
 
     def generate_mesh_indices(self, mesh, faces):
         # Set the face indices
@@ -145,8 +165,10 @@ class UsdManager():
         face_vertex_counts = [3] * int(faces_count)
         mesh.CreateFaceVertexCountsAttr().Set(face_vertex_counts)
 
-    def assign_mesh_material(self, usd_mesh, material_name, material_color, alpha):
+
+    def assign_mesh_material(self, usd_mesh, material_name, material_color, alpha, texture_info):
         # Create a transparent material for the mesh
+
         material_container_path = str(self.material_container_prim.GetPath())
         
         safe_material_name = self.get_safe_prim_name(material_name)
@@ -154,19 +176,23 @@ class UsdManager():
         material = UsdShade.Material.Define(self.stage,  material_path)
 
         # Create a surface shader
-        shader_path = f"{material_path}/SurfaceShader"
+        shader_path = f"{material_path}/PBR_Shader"
         surfaceShader = UsdShade.Shader.Define(self.stage, shader_path)
         surfaceShader.CreateIdAttr("UsdPreviewSurface")
         surfaceShader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(material_color))
         surfaceShader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(alpha)  # Set the opacity value for transparency
 
-        if material_name is "transparent":
+        if material_name == "transparent":
             surfaceShader.CreateInput("opacityThreshold", Sdf.ValueTypeNames.Float).Set(0.1)  # Set the opacity Threshold value 
 
         # Connect the surface shader to the material's surface output
         # Assign the material to the mesh
         material.CreateSurfaceOutput().ConnectToSource(surfaceShader.ConnectableAPI(), "surface")
         UsdShade.MaterialBindingAPI(usd_mesh).Bind(material)
+
+        
+        if (texture_info is not None and len(texture_info) > 0):
+            self.set_texture(usd_mesh, material_path, material, surfaceShader, texture_info)
 
     def assign_mesh_subset_material(self, usd_mesh, material_name, material_color, material_texture, alpha, material_start_index_face_indices, material_indices_count):
         # Define the material TODO: check if already exist
@@ -182,7 +208,7 @@ class UsdManager():
 
         usd_diffuse = network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f)
         usd_diffuse.Set(material_color)
-        # Manage roughness and metallic TODO
+        # TODO: Manage roughness and metallic 
 
         usd_opacity = network.CreateInput("opacity", Sdf.ValueTypeNames.Float)
         usd_opacity.Set(alpha)  # Set the opacity value for transparency
@@ -217,20 +243,38 @@ class UsdManager():
                     material_start_index_face_indices + material_indices_count
                 )
             )
+
+            
+
             subset.CreateIndicesAttr(subset_indices)
             subset.CreateElementTypeAttr(UsdGeom.Tokens.face)
+            subset.CreateFamilyNameAttr("materialBind")
+            
             material.CreateSurfaceOutput().ConnectToSource(network.ConnectableAPI(), "surface")
+
+            subset.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)
             UsdShade.MaterialBindingAPI(subset.GetPrim()).Bind(material)
 
         if (material_texture is not None):
-            self.set_texture(usd_mesh, material_texture, material_path, material, network)
+            pass
+            #self.set_texture(usd_mesh, material_texture, material_path, material, network)
 
-    # example
-    def set_texture(self, usd_mesh, material_texture, material_path, material, network):
+
+    def set_texture(self, usd_mesh, material_path, material, network, texture_info):
         """
         Check if for a material created in USD has a 'stReader' in order to\n
         be able to apply the texture to the mesh
         """
+
+        texture_path = texture_info.texture_url
+        texture_mode = texture_info.texture_mode
+        texture_repeat_S = texture_info.texture_repeat_S
+        texture_repeat_T = texture_info.texture_repeat_T
+        texture_transform = texture_info.texture_transform
+
+        
+        # TODO: Manage if texture is Diffuse, Normal, Metallic and so on...
+        
         texture_prim_path = f"{material_path}/stReader"
         texture_prim = self.stage.GetPrimAtPath(texture_prim_path)
 
@@ -241,21 +285,26 @@ class UsdManager():
             stReader = UsdShade.Shader.Define(self.stage, f"{material_path}/stReader")
             stReader.CreateIdAttr('UsdPrimvarReader_float2')
 
+            stReader.CreateImplementationSourceAttr()
+
             diffuse_texture = self.stage.GetPrimAtPath(f"{material_path}/diffuseTexture")
 
             if diffuse_texture.IsValid() is False:
                 diffuseTextureSampler = UsdShade.Shader.Define(self.stage, f"{material_path}/diffuseTexture")
                 diffuseTextureSampler.CreateIdAttr('UsdUVTexture')
-                diffuseTextureSampler.CreateInput('file', Sdf.ValueTypeNames.Asset).Set(material_texture)
+                diffuseTextureSampler.CreateInput('file', Sdf.ValueTypeNames.Asset).Set(texture_path)
                 diffuseTextureSampler.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(stReader.ConnectableAPI(), 'result')
                 diffuseTextureSampler.CreateOutput('rgb', Sdf.ValueTypeNames.Float3)
-                diffuseTextureSampler.CreateInput('wrapS', Sdf.ValueTypeNames.String).Set('repeat')
-                diffuseTextureSampler.CreateInput('wrapT', Sdf.ValueTypeNames.String).Set('repeat')
+
+                # TODO: check all possible values for wrap
+                diffuseTextureSampler.CreateInput('wrapS', Sdf.ValueTypeNames.String).Set("clamp" if texture_repeat_S is None else "repeat" ) # .Set('repeat')
+                diffuseTextureSampler.CreateInput('wrapT', Sdf.ValueTypeNames.String).Set("clamp" if texture_repeat_T is None else "repeat") #.Set('repeat')
 
                 network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(diffuseTextureSampler.ConnectableAPI(), 'rgb')
 
-                stInput = material.CreateInput("frame:stPrimVarName", Sdf.ValueTypeNames.Token)
+                stInput = material.CreateInput("frame:stPrimVarName", Sdf.ValueTypeNames.String)
                 stInput.Set('st')
+
                 stReader.CreateInput('varname', Sdf.ValueTypeNames.Token).ConnectToSource(stInput)
 
                 usd_mesh.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)

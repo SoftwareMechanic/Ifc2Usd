@@ -7,11 +7,11 @@ import traceback
 # ---------------- ARGS MANAGEMENT ------------------- #
 
 args_manager = ArgsManager()
-input_ifc_files, output_usd_file, angular_tolerance, deflection_tolerance, generate_uvs, generate_colliders, reuse_geometry = args_manager.manage_arguments()
+input_ifc_files, output_usd_file, ignore_ifc_types, angular_tolerance, deflection_tolerance, generate_uvs,texture, generate_colliders, reuse_geometry = args_manager.manage_arguments()
 
 # ---------------- CONVERSION ------------------- #
 
-ifc2usd_manager = Ifc2UsdManager(output_usd_file, generate_uvs, generate_colliders, reuse_geometry)
+ifc2usd_manager = Ifc2UsdManager(output_usd_file, generate_uvs, ignore_ifc_types, texture, generate_colliders, reuse_geometry)
 
 conversion_timer = Timer("Conversion")
 conversion_timer.start()

@@ -3,18 +3,20 @@ from converter_utils.quantity_sets_class import QuantitySets
 from converter_utils.usd_manager import UsdManager
 
 import os
+import traceback
 import shutil
 
 from converter_utils.property_sets_class import PropertySet, PropertySets
 from converter_utils.object_type_class import ObjectInfo
 
 
+from converter_utils import geomery_helper
+
+
 class Ifc2UsdManager():
-    def __init__(self, usd_output_path, generate_uvs, generate_colliders, reuse_geometry):
+    def __init__(self, usd_output_path, generate_uvs, ignore_ifc_types, take_texture_from_ifc, generate_colliders, reuse_geometry):
         self.ifc_manager = None
         self.usd_manager = UsdManager(usd_output_path)
-        
-
         self.ifc_types_and_counters = dict()
 
         self.usd_namespace_delimiter = ":"
@@ -28,13 +30,16 @@ class Ifc2UsdManager():
         self.generate_uvs = generate_uvs
         self.generate_colliders = generate_colliders
         self.reuse_geometry = reuse_geometry
+        self.take_texture_from_ifc = take_texture_from_ifc
+
+        self.ifc_types_to_ignore = ignore_ifc_types
         
 
 
 
     def convert_ifc_to_usd(self, ifc_file_path, angular_tolerance, deflection_tolerance):
         self.usd_manager.clear_prims_reference()
-        self.ifc_manager = IfcManager(ifc_file_path, angular_tolerance, deflection_tolerance )
+        self.ifc_manager = IfcManager(ifc_file_path, self.ifc_types_to_ignore, angular_tolerance, deflection_tolerance, self.take_texture_from_ifc)
 
         filename_without_extension = os.path.basename(ifc_file_path).split('.')[0]
 
@@ -45,20 +50,20 @@ class Ifc2UsdManager():
         ifc_geometry_iterator = self.ifc_manager.geometry_iterator
 
         self.create_ifc_hierarchy_in_usd(model_prim, self.usd_manager.stage)
-
         mesh_reused_counter = 0
         if ifc_geometry_iterator.initialize():
             try:
                 while True:
+                    
                     ifc_mesh_info = self.ifc_manager.get_ifc_mesh_info(ifc_geometry_iterator)
-                    print("Mesh info: ", ifc_mesh_info)
+                    
 
                     if (ifc_mesh_info is None):
                         if not ifc_geometry_iterator.next():
                             break
                         continue
 
-                    guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs = ifc_mesh_info
+                    guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs, normals, ifc_texture_info = ifc_mesh_info
 
                     matrix = self.fix_matrix(matrix)
 
@@ -69,46 +74,48 @@ class Ifc2UsdManager():
                         if (is_same_mesh_used):
                             mesh_to_reuse = self.verts_and_relative_usd_mesh_path[verts]
                             usd_mesh = self.usd_manager.reuse_usd_mesh(guid, mesh_to_reuse)
-                            self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs)
-                           
+                            self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs, normals)
 
-                            self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh)
+                            self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh, ifc_texture_info)
                             mesh_reused_counter += 1
                         else:
                             usd_mesh = self.usd_manager.create_usd_mesh_(guid)
-                            self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs)
+                            self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs, normals)
 
-                            self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh)
+                            self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh, ifc_texture_info)
 
                             self.verts_and_relative_usd_mesh_path[verts] = str(usd_mesh.GetPath())
                     else:
                         usd_mesh = self.usd_manager.create_usd_mesh_(guid)
-                        self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs)
-                        self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh)
+                        self.set_usd_mesh(usd_mesh, faces, verts, matrix, uvs, normals)
+                        self.manage_mesh_material(ifc_type, materials, materials_ids, usd_mesh, ifc_texture_info)
 
                     if not ifc_geometry_iterator.next():
                         break
 
                 print("Potential mesh to reuse ", mesh_reused_counter)
             except Exception as e:
+                traceback.print_exc()
                 print(e)
 
         self.usd_manager.save_stage()
 
-    def set_usd_mesh(self, usd_mesh, faces, verts, matrix, uvs):
+    def set_usd_mesh(self, usd_mesh, faces, verts, matrix, uvs, normals):
         #usd_mesh = self.usd_manager.create_usd_mesh_(name)
+
         self.usd_manager.generate_mesh_vertices(usd_mesh, verts)
         self.usd_manager.generate_mesh_indices(usd_mesh, faces)
+        # self.usd_manager.generate_mesh_normals(usd_mesh, normals)
         self.usd_manager.assign_transform_matrix(usd_mesh, matrix)  # use prim instead of mesh?
-        if (self.generate_colliders):
-            self.usd_manager.generate_collider(usd_mesh.GetPrim())  # use prim instead of mesh?
         if (self.generate_uvs):
             self.usd_manager.generate_uvs(usd_mesh, uvs)
+        if (self.generate_colliders):
+            self.usd_manager.generate_collider(usd_mesh.GetPrim())  # use prim instead of mesh?
 
 
-    def manage_mesh_material(self, ifc_type, materials, materials_ids, usd_mesh):
+    def manage_mesh_material(self, ifc_type, materials, materials_ids, usd_mesh, ifc_texture_info):
         if ifc_type == "IfcOpeningElement" or ifc_type == "IfcSpace":
-            self.usd_manager.assign_mesh_material(usd_mesh, "transparent", [0.0, 0.0, 0.0], 0.0)
+            self.usd_manager.assign_mesh_material(usd_mesh, "transparent", [0.0, 0.0, 0.0], 0.0, None)
         else:
             if len(materials) == 1:
                 material = materials[0]
@@ -124,7 +131,13 @@ class Ifc2UsdManager():
                 if material.has_transparency:
                     material_transparency = 1 - material.transparency
 
-                self.usd_manager.assign_mesh_material(usd_mesh, material_name, material_color, material_transparency)
+                # TODO: better management for texture
+                if self.take_texture_from_ifc:
+                    texture_url = ifc_texture_info.texture_url
+                    texture_complete_path = self.get_relative_texture_if_available(texture_url)
+                    self.copy_texture_usd_output(texture_complete_path, texture_url)
+
+                self.usd_manager.assign_mesh_material(usd_mesh, material_name, material_color, material_transparency,ifc_texture_info)
 
             else:
                 materials_ids_and_counts = self.get_materials_ids_and_relative_counts(materials_ids)
@@ -139,27 +152,29 @@ class Ifc2UsdManager():
                     if material.has_transparency:
                         material_transparency = 1 - material.transparency
 
-                    texture_name = self.get_relative_texture_if_available(material.original_name())
-                    relative_texture_path = self.get_relative_texture_path(texture_name)
 
-                    self.usd_manager.assign_mesh_subset_material(usd_mesh, material.original_name(), material.diffuse, relative_texture_path, material_transparency, material_start_index_faces_indices, material_count )
+                    # TODO: better management for texture
+                    if self.take_texture_from_ifc:
+                        texture_url = ifc_texture_info.texture_url
+                        texture_complete_path = self.get_relative_texture_if_available(texture_url)
+                        self.copy_texture_usd_output(texture_complete_path, texture_url)
+
+                    self.usd_manager.assign_mesh_subset_material(usd_mesh, material.original_name(), material.diffuse, ifc_texture_info, material_transparency, material_start_index_faces_indices, material_count )
 
                     material_start_index_faces_indices += material_count
 
-    def get_relative_texture_path(self, texture_name):
-        relative_texture_path = None
+    def copy_texture_usd_output(self, texture_complete_path,  texture_name):
+        usd_output_directory = os.path.dirname(self.usd_output_path)
 
-        if texture_name is not None:
-            relative_texture_path = "textures/" + texture_name 
-            ifc_directory = os.path.dirname(self.ifc_manager.ifc_file_path)
-            usd_output_directory = os.path.dirname(self.usd_output_path)
-            texture_file_path = f"{ifc_directory}/{texture_name}"
-            os.makedirs(f"{usd_output_directory}/textures", exist_ok=True)
-            shutil.copy(texture_file_path, f"{usd_output_directory}/textures/{texture_name}")
-        return relative_texture_path
+        usd_output_directory = f"{usd_output_directory}/{os.path.dirname(texture_name)}" #os.path.join(usd_output_directory, os.path.dirname(texture_name))
+        print("USD OUT: " , usd_output_directory)
 
+        os.makedirs(f"{usd_output_directory}", exist_ok=True)
+        shutil.copy(texture_complete_path, f"{usd_output_directory}/{os.path.basename(texture_name)}")
+        
     def create_ifc_hierarchy_in_usd(self, model_prim, usd_stage):
         ifc_projects = self.ifc_manager.get_ifc_projects()
+        
         for ifc_project in ifc_projects:
             self.ifc_manager.ifc_project = ifc_project
 
@@ -170,21 +185,15 @@ class Ifc2UsdManager():
             )
         print("hierarchy created")
 
+
+    # TODO: simplify the function
     def _create_ifc_hierarchy_in_usd(self, ifc_element, parent_prim, stage):
-        # define common variables
         ifc_element_info = ifc_element.get_info()
         
-        obj_placement = ifc_element_info.get("ObjectPlacement") or None
-        if obj_placement is not None:
-            #print(dir(obj_placement))
-            
-            #print(str(obj_placement.PlacementRelTo))
-            #print(obj_placement.PlacesObject)
-            #print(str(obj_placement.ReferencedByPlacements))
-            #print(obj_placement.RelativePlacement.get_info())
-            pass
+        # obj_placement = ifc_element_info.get("ObjectPlacement") or None
 
         guid = ifc_element.GlobalId
+
         ifc_entity = ifc_element.is_a()
 
         # define the name to use for the element
@@ -313,16 +322,6 @@ class Ifc2UsdManager():
         #-----------------------HIERARCHY CONSTRUCTION -----------------------
         # follow Spatial relation
 
-        # for attr in dir(ifc_element):
-        #     try:
-        #         print(attr + "," + str(getattr(ifc_element, attr)))
-        #     except:
-        #         pass
-            #print(getattr(ifc_element,  attr))
-
-        products = self.ifc_manager.ifc_file.by_type("IfcProduct")
-        print(products)
-
         if (ifc_element.is_a('IfcSpatialStructureElement')):
             # print(ifc_element.is_a(), " IfcSpatialStructureElement:")
             for rel in ifc_element.ContainsElements:
@@ -334,7 +333,6 @@ class Ifc2UsdManager():
                     self._create_ifc_hierarchy_in_usd(child,  prim_as_parent, stage)        
         # follow Aggregation Relation
         if (ifc_element.is_a('IfcObjectDefinition')):
-            # print(ifc_element.is_a(), " IfcObjectDefinition:")
             for rel in ifc_element.IsDecomposedBy:
                 relatedObjects = rel.RelatedObjects
                 if relatedObjects is None:
@@ -387,15 +385,13 @@ class Ifc2UsdManager():
 
     def get_relative_texture_if_available(self, material_name):
         # here we check if in the same directory of IFC file there is an image/texture
-        # that has the same name of the material passed as parameter
-        # if there is, theorically this texture should be the one assigned to objects with this material
+        # with the same name given by Ifc
 
-        # TODO: check if there is another more clear way to know if a ifc material has a related texture
-        file_directory = os.path.dirname(self.ifc_manager.ifc_file_path)
-        files_and_directories = os.listdir(file_directory)
+        ifc_file_directory = os.path.dirname(self.ifc_manager.ifc_file_path)
+        texture_file_path = os.path.join(ifc_file_directory, material_name)
+        texture_exists = os.path.isfile(texture_file_path)
 
-        texture_file_path = [x for x in files_and_directories if x.startswith(material_name)]
-        if len(texture_file_path) == 0:
-            return None
+        if texture_exists:
+            return texture_file_path
         else:
-            return texture_file_path[0]
+            return None

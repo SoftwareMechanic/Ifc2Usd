@@ -52,6 +52,20 @@ class ArgsManager(object):
                             default=False,
                             required=False
                             )
+        
+        parser.add_argument("--texture",
+                            action='store_true',
+                            help="EXPERIMENTAL, try to read and use texture ",
+                            default=False,
+                            required=False
+                            )
+        
+        parser.add_argument("--ignore_ifc_type",
+                            action='store',
+                            help="Don't include specific ifc types",
+                            default=[],
+                            required=False
+                            )
 
         parser.add_argument('--colliders',
                             action='store_true',
@@ -78,7 +92,13 @@ class ArgsManager(object):
 
         config = vars(args)
 
+
+        angular_tolerance = float(config["angular_tolerance"])  # 2  # 1.5
+        deflection_tolerance = float(config["deflection_tolerance"])  # 0.14
+
         output_usd_file = str(config["output_file"])
+
+        # get input ifc files, from folder parameter or from files parameter
         input_ifc_files = []
         folder = config["folder"]
         if (folder is not None):
@@ -87,15 +107,22 @@ class ArgsManager(object):
                     if file.lower().endswith('.ifc'):
                         input_ifc_files.append(folder + "/" + file)
         
-
-       
+        # get input ifc files array 
         if input_ifc_files is None or len(input_ifc_files) == 0:
             input_ifc_files = config["files"].replace("[", "").replace("]", "").split(",")
+            input_ifc_files = [file.strip() for file in input_ifc_files]
 
-        angular_tolerance = float(config["angular_tolerance"])  # 2  # 1.5
-        deflection_tolerance = float(config["deflection_tolerance"])  # 0.14
+       
+
+        ignore_ifc_types = config["ignore_ifc_type"]
+
+        if (len(ignore_ifc_types) > 0):
+            ignore_ifc_types = ignore_ifc_types.replace("[", "").replace("]", "").split(",")
+            ignore_ifc_types = [file.strip() for file in ignore_ifc_types]
+
 
         uvs = bool(config["uvs"])
+        texture = bool(config["texture"])
         colliders = bool(config["colliders"])
         reuse_geometry = bool(config["reuse_mesh_ref"])
 
@@ -104,8 +131,10 @@ class ArgsManager(object):
         return (
             input_ifc_files,
             output_usd_file,
+            ignore_ifc_types,
             angular_tolerance,
             deflection_tolerance,
             uvs,
+            texture,
             colliders,
             reuse_geometry)
