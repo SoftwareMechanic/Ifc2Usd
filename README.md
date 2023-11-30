@@ -1,6 +1,6 @@
 # Ifc2Usd
  Repository used to convert IFC files to USD
-
+ Python 3.10
  In order to make it work you have to install the ifcopenshell package for python
 
  # TO DO:
