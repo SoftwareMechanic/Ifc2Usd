@@ -5,6 +5,8 @@
  
  In order to make it work you have to install the ifcopenshell package for python
 
+ (Currently tested for windows)
+
  # TO DO:
  * Create an option which create a flat hierarchy, but with an empty USD prim which contains an attribute containing the IFC Hierarchy (maybe will be definitive and replace the current hierarchy management)
  * Test more IFC files with textures in order to improve the current behavior
