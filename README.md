@@ -3,9 +3,9 @@
  
  Python 3.10
  
- In order to make it work you have to install the ifcopenshell package for python
+ In order to make it work you have to install the ifcopenshell package for python (tested with v0.7.0-f0e03c79d)
 
- (Currently tested for windows)
+ (Currently tested on windows)
 
  # TO DO:
  * Create an option which create a flat hierarchy, but with an empty USD prim which contains an attribute containing the IFC Hierarchy (maybe will be definitive and replace the current hierarchy management)
