@@ -16,6 +16,8 @@ from converter_utils import texture_info_class
 
 class IfcManager():
     def __init__(self, ifc_file_path, ifc_types_to_ignore, angular_tolerance, deflection_tolerance, take_textures):
+
+        print(ifcopenshell.version)
         # pass
         self.ifc_file_path = ifc_file_path
         self.ifc_file = self.open_ifc_file(ifc_file_path)

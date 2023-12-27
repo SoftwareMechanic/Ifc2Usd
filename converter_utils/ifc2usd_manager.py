@@ -178,6 +178,8 @@ class Ifc2UsdManager():
         for ifc_project in ifc_projects:
             self.ifc_manager.ifc_project = ifc_project
 
+            self.ifc_types_and_counters = dict()
+
             self._create_ifc_hierarchy_in_usd(
                 ifc_project,
                 model_prim,
@@ -208,20 +210,171 @@ class Ifc2UsdManager():
 
         # group by ifc types  TODO: use a flag to indicate if group or not?
 
-        is_type_container_created = self.usd_manager.is_prim_already_created(
-            parent_prim,
-            ifc_entity)
+        # is_type_container_created = self.usd_manager.is_prim_already_created(
+        #     parent_prim,
+        #     ifc_entity)
 
-        if is_type_container_created is False:
-            parent_prim = self.usd_manager.create_prim(
-                parent_prim,
-                guid,
-                ifc_entity,
-                "Scope")
+        # if is_type_container_created is False:
+        #     parent_prim = self.usd_manager.create_prim(
+        #         parent_prim,
+        #         guid,
+        #         ifc_entity,
+        #         "Scope")
+        # else:
+        #     parent_prim = self.usd_manager.get_prim_if_created(
+        #         parent_prim,
+        #         ifc_entity)
+
+        prim = self.usd_manager.create_prim(parent_prim, guid, prim_name)
+        self.ManageElementProperties(ifc_element, ifc_element_info, guid, ifc_entity, prim)
+
+        #-----------------------HIERARCHY CONSTRUCTION -----------------------
+        # follow Spatial relation
+
+        #print(dir(ifc_element))
+        #print(dir(ifc_element.Decomposes))
+        print("__" + ifc_element.GlobalId + "__")
+        for dec in ifc_element.Decomposes:
+            print((dec.GlobalId))
+
+        if (ifc_element.is_a('IfcSpatialStructureElement')):
+            # print(ifc_element.is_a(), " IfcSpatialStructureElement:")
+            for rel in ifc_element.ContainsElements:
+                relatedElements = rel.RelatedElements
+                if relatedElements is None:
+                    continue
+                for child in relatedElements:
+                    prim_as_parent = prim
+                    self._create_ifc_hierarchy_in_usd(child,  prim, stage)        
+        # follow Aggregation Relation
+        if (ifc_element.is_a('IfcObjectDefinition')):
+            for rel in ifc_element.IsDecomposedBy:
+                relatedObjects = rel.RelatedObjects
+                if relatedObjects is None:
+                    continue
+                for child in relatedObjects:
+                    self._create_ifc_hierarchy_in_usd(child,  prim, stage)
+        # check for openings
+        if (ifc_element.is_a('IfcElement')):
+            if len(ifc_element.HasOpenings) > 0:
+                for openingRelation in ifc_element.HasOpenings:
+                    opening = openingRelation.RelatedOpeningElement
+                    self._create_ifc_hierarchy_in_usd(opening,  prim, stage)
+
+    def ManageElementProperties(self, ifc_element, ifc_element_info, guid, ifc_entity, prim):
+        self.usd_manager.create_prim_string_attribute(
+            prim,
+            "guid",
+            guid,
+            self.base_namespace)
+
+        self.usd_manager.create_prim_string_attribute(
+            prim,
+            "ifcType",
+            ifc_entity,
+            self.base_namespace)
+
+        property_sets_instance = PropertySets()
+        quantity_sets_instance = QuantitySets()
+        object_info = ObjectInfo()
+
+        object_info.GUID = guid
+        object_info.IfcEntity = ifc_entity
+        object_info.Name = ifc_element_info.get("Name") or ""
+        object_info.Description = ifc_element_info.get("Description") or ""
+        object_info.OverallHeight = ifc_element_info.get("OverallHeight") or ""
+        object_info.OverallWidth = ifc_element_info.get("OverallWidth") or ""
+        object_info.ObjectType = ifc_element_info.get("ObjectType") or ""
+        object_info.ObjectType = ifc_element_info.get("Tag") or ""
+
+        # --------------------MANAGE PROPERTIES -----------------------#
+        for definition in ifc_element.IsDefinedBy:
+            if definition.is_a('IfcRelDefinesByProperties'):
+                related_data = definition.RelatingPropertyDefinition
+
+                if related_data.is_a('IfcPropertySet'):
+                    property_set_name = related_data.Name
+                    property_set_guid = related_data.GlobalId
+                    properties = self.ifc_manager.get_element_properties(
+                        related_data,
+                    )
+
+                    if properties is None or len(properties) == 0:
+                        continue
+
+                    property_set = PropertySet(property_set_guid, property_set_name)
+                    property_set.Properties = properties
+                    property_sets_instance.property_sets.append(property_set)
+
+                elif related_data.is_a('IfcElementQuantity'):
+                    quantitySet = self.ifc_manager.get_element_quantities(
+                        related_data,
+                    )
+
+                    quantity_sets_instance.quantity_sets.append(quantitySet)
+
+            if definition.is_a('IfcRelDefinesByType'):
+                definition_type_info = definition.RelatingType.get_info()
+
+                object_info.ConstructionType = definition_type_info.get("ConstructionType") or ""
+                object_info.OperationType = definition_type_info.get("OperationType") or ""
+                object_info.PredefinedType = definition_type_info.get("PredefinedType") or ""
+                object_info.ElementType = definition_type_info.get("ElementType") or ""
+
+                #ifcObjectType = ObjectInfo(guid, ifc_entity, definition_type, definition_name, definition_tag, definition_element_type, definition_predefined_type, definition_construction_type, definition_operation_type)
+
+                if (definition.RelatingType.HasPropertySets is not None):
+                    for property_set in definition.RelatingType.HasPropertySets:
+                        pset_name = property_set.Name
+                        pset_guid = property_set.GlobalId
+                        properties = self.ifc_manager.get_element_properties(
+                            property_set,
+                        )
+
+                        if properties is None or len(properties) == 0:
+                            continue
+
+                        property_set_instance = PropertySet(pset_guid, pset_name)
+                        property_set_instance.properties = properties
+                        property_sets_instance.property_sets.append(property_set_instance)
+
+            if definition.is_a('IfcRelDefinesByTemplate'):
+                print("IfcRelDefinesByTemplate")
+
+            if definition.is_a('IfcRelDefinesByObject'):
+                print("IfcRelDefinesByObject")
+
+            if (definition.is_a('IfcRelDefinesByObject') or definition.is_a('IfcRelDefinesByTemplate') or definition.is_a('IfcRelDefinesByType') or definition.is_a('IfcRelDefinesByProperties')) is False:
+                print(definition.is_a())
+
+        # Setting all the psets as a prim attribute
+        # if we use namespaces to define also the single property set level
+        # may cause errors because of characters not authorized in namespaces/key for attributes
+        # but all chars are ok in the value field of the attribute
+
+        self.usd_manager.create_prim_string_attribute(prim, "propertySets", property_sets_instance.toJSON(), self.base_namespace )
+        self.usd_manager.create_prim_string_attribute(prim, "quantitySets", quantity_sets_instance.toJSON(), self.base_namespace )
+        self.usd_manager.create_prim_string_attribute(prim, "ifcObjectInfo", object_info.toJSON(), self.base_namespace )
+
+    # TODO: simplify the function
+    def _create_ifc_hierarchy_in_usd_2(self, ifc_element, parent_prim, stage):
+        ifc_element_info = ifc_element.get_info()
+        guid = ifc_element.GlobalId
+        ifc_entity = ifc_element.is_a()
+
+        # define the name to use for the element
+        ifc_type_counter = self.ifc_types_and_counters.get(ifc_entity)
+        if ifc_type_counter is None:
+            self.ifc_types_and_counters[ifc_entity] = 0
         else:
-            parent_prim = self.usd_manager.get_prim_if_created(
-                parent_prim,
-                ifc_entity)
+            self.ifc_types_and_counters[ifc_entity] = ifc_type_counter + 1
+
+
+
+        counter_for_type = str(self.ifc_types_and_counters[ifc_entity])
+        prim_name = ifc_entity + "_" + counter_for_type
+
+        # group by ifc types  TODO: use a flag to indicate if group or not?
 
         prim = self.usd_manager.create_prim(parent_prim, guid, prim_name)
         self.usd_manager.create_prim_string_attribute(
@@ -329,8 +482,7 @@ class Ifc2UsdManager():
                 if relatedElements is None:
                     continue
                 for child in relatedElements:
-                    prim_as_parent = prim
-                    self._create_ifc_hierarchy_in_usd(child,  prim_as_parent, stage)        
+                    self._create_ifc_hierarchy_in_usd_2(child,  parent_prim, stage)        
         # follow Aggregation Relation
         if (ifc_element.is_a('IfcObjectDefinition')):
             for rel in ifc_element.IsDecomposedBy:
@@ -338,13 +490,13 @@ class Ifc2UsdManager():
                 if relatedObjects is None:
                     continue
                 for child in relatedObjects:
-                    self._create_ifc_hierarchy_in_usd(child,  prim, stage)
+                    self._create_ifc_hierarchy_in_usd_2(child,  parent_prim, stage)
         # check for openings
         if (ifc_element.is_a('IfcElement')):
             if len(ifc_element.HasOpenings) > 0:
                 for openingRelation in ifc_element.HasOpenings:
                     opening = openingRelation.RelatedOpeningElement
-                    self._create_ifc_hierarchy_in_usd(opening,  parent_prim.GetParent(), stage)
+                    self._create_ifc_hierarchy_in_usd_2(opening,  parent_prim, stage)
 
     def get_materials_ids_and_relative_counts(self, materials_ids):
         vectorWithMatIdsAndRelativeIndicesCount = []

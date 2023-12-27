@@ -200,64 +200,68 @@ class UsdManager():
         material_prim_name = self.get_safe_prim_name(material_name)
         material_path = material_container_path + material_prim_name
 
-        material = UsdShade.Material.Define(self.stage,  material_path)
+        materialPrim = self.stage.GetPrimAtPath(material_path)
 
-        # Create a new pbr shader for each material
-        network = UsdShade.Shader.Define(self.stage, f"{material_path}/PBR_Shader")
-        network.CreateIdAttr("UsdPreviewSurface")
+        if (materialPrim.IsValid()):
 
-        usd_diffuse = network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f)
-        usd_diffuse.Set(material_color)
-        # TODO: Manage roughness and metallic 
+            material = UsdShade.Material.Define(self.stage,  material_path)
 
-        usd_opacity = network.CreateInput("opacity", Sdf.ValueTypeNames.Float)
-        usd_opacity.Set(alpha)  # Set the opacity value for transparency
+            # Create a new pbr shader for each material
+            network = UsdShade.Shader.Define(self.stage, f"{material_path}/PBR_Shader")
+            network.CreateIdAttr("UsdPreviewSurface")
 
-        # Create a new subset for the material, if not already created
-        # we have to initialize it and define indices related to this subset
-        # and bind the material to it
-        # if already created we get it and extend the indices of that subset
-        # otherwise considering we create subste with material name
-        # the subset will be overwritten, causing a wrong material assignment
-        usd_mesh_path = str(usd_mesh.GetPath())
-        subset_name = self.get_safe_prim_name("Subset_" + material_name)
-        subset_path = usd_mesh_path + subset_name
-        subset = self.stage.GetPrimAtPath(subset_path)
+            usd_diffuse = network.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f)
+            usd_diffuse.Set(material_color)
+            # TODO: Manage roughness and metallic 
 
-        if (subset.IsValid()):
-            subset_indices = list(UsdGeom.Subset(subset).GetIndicesAttr().Get())
-            subset_indices_to_merge = list(
-                range(
-                    material_start_index_face_indices,
-                    material_start_index_face_indices + material_indices_count
+            usd_opacity = network.CreateInput("opacity", Sdf.ValueTypeNames.Float)
+            usd_opacity.Set(alpha)  # Set the opacity value for transparency
+
+            # Create a new subset for the material, if not already created
+            # we have to initialize it and define indices related to this subset
+            # and bind the material to it
+            # if already created we get it and extend the indices of that subset
+            # otherwise considering we create subste with material name
+            # the subset will be overwritten, causing a wrong material assignment
+            usd_mesh_path = str(usd_mesh.GetPath())
+            subset_name = self.get_safe_prim_name("Subset_" + material_name)
+            subset_path = usd_mesh_path + subset_name
+            subset = self.stage.GetPrimAtPath(subset_path)
+
+            if (subset.IsValid()):
+                subset_indices = list(UsdGeom.Subset(subset).GetIndicesAttr().Get())
+                subset_indices_to_merge = list(
+                    range(
+                        material_start_index_face_indices,
+                        material_start_index_face_indices + material_indices_count
+                        )
+                    )
+
+                subset_indices.extend(subset_indices_to_merge)
+                UsdGeom.Subset(subset).CreateIndicesAttr(subset_indices)
+            else:
+                subset = UsdGeom.Subset.Define(self.stage, subset_path)
+                subset_indices = list(
+                    range(
+                        material_start_index_face_indices,
+                        material_start_index_face_indices + material_indices_count
                     )
                 )
 
-            subset_indices.extend(subset_indices_to_merge)
-            UsdGeom.Subset(subset).CreateIndicesAttr(subset_indices)
-        else:
-            subset = UsdGeom.Subset.Define(self.stage, subset_path)
-            subset_indices = list(
-                range(
-                    material_start_index_face_indices,
-                    material_start_index_face_indices + material_indices_count
-                )
-            )
+                
 
-            
+                subset.CreateIndicesAttr(subset_indices)
+                subset.CreateElementTypeAttr(UsdGeom.Tokens.face)
+                subset.CreateFamilyNameAttr("materialBind")
+                
+                material.CreateSurfaceOutput().ConnectToSource(network.ConnectableAPI(), "surface")
 
-            subset.CreateIndicesAttr(subset_indices)
-            subset.CreateElementTypeAttr(UsdGeom.Tokens.face)
-            subset.CreateFamilyNameAttr("materialBind")
-            
-            material.CreateSurfaceOutput().ConnectToSource(network.ConnectableAPI(), "surface")
+                subset.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)
+                UsdShade.MaterialBindingAPI(subset.GetPrim()).Bind(material)
 
-            subset.GetPrim().ApplyAPI(UsdShade.MaterialBindingAPI)
-            UsdShade.MaterialBindingAPI(subset.GetPrim()).Bind(material)
-
-        if (material_texture is not None):
-            pass
-            #self.set_texture(usd_mesh, material_texture, material_path, material, network)
+            if (material_texture is not None):
+                pass
+                #self.set_texture(usd_mesh, material_texture, material_path, material, network)
 
 
     def set_texture(self, usd_mesh, material_path, material, network, texture_info):
