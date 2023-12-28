@@ -191,11 +191,7 @@ class Ifc2UsdManager():
     # TODO: simplify the function
     def _create_ifc_hierarchy_in_usd(self, ifc_element, parent_prim, stage):
         ifc_element_info = ifc_element.get_info()
-        
-        # obj_placement = ifc_element_info.get("ObjectPlacement") or None
-
         guid = ifc_element.GlobalId
-
         ifc_entity = ifc_element.is_a()
 
         # define the name to use for the element
@@ -231,11 +227,7 @@ class Ifc2UsdManager():
         #-----------------------HIERARCHY CONSTRUCTION -----------------------
         # follow Spatial relation
 
-        #print(dir(ifc_element))
-        #print(dir(ifc_element.Decomposes))
-        print("__" + ifc_element.GlobalId + "__")
-        for dec in ifc_element.Decomposes:
-            print((dec.GlobalId))
+        
 
         if (ifc_element.is_a('IfcSpatialStructureElement')):
             # print(ifc_element.is_a(), " IfcSpatialStructureElement:")
@@ -250,10 +242,10 @@ class Ifc2UsdManager():
         if (ifc_element.is_a('IfcObjectDefinition')):
             for rel in ifc_element.IsDecomposedBy:
                 relatedObjects = rel.RelatedObjects
-                if relatedObjects is None:
-                    continue
-                for child in relatedObjects:
-                    self._create_ifc_hierarchy_in_usd(child,  prim, stage)
+                if relatedObjects:
+                    for child in relatedObjects:
+                        self._create_ifc_hierarchy_in_usd(child,  prim, stage)
+                
         # check for openings
         if (ifc_element.is_a('IfcElement')):
             if len(ifc_element.HasOpenings) > 0:

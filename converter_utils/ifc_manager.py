@@ -357,8 +357,26 @@ class IfcManager():
                 #element_properties[prop.Name] = values
                 property = Property(prop.Name, value_type, "", values)
                 element_properties.append(property)
+            elif (prop.is_a("IfcComplexProperty")):
+                for prop_in_property in prop.HasProperties:
+                    prop_type = prop_in_property.NominalValue.get_info()['type']
+                    prop_info = prop_in_property.get_info()
+                    value_unit = ""
+                    if prop_type.endswith('Measure'):
+                        value_unit =  self.from_measure_to_unit(prop_type)
+                    
+                    property = Property(prop_info['Name'], prop_type, value_unit, prop_info["NominalValue"].wrappedValue)
+                    element_properties.append(property)
             else:
                 print("Unknown property type -> ", prop.is_a())
+                print(ifc_property_set.Name)
+                print(prop.get_info())
+
+                
+                # print(dir(prop))
+                # for attr in dir(prop.get_info()):
+                #   print(attr, getattr(prop.get_info(), attr))
+                #print(dir(prop.is_a()))
         
         return element_properties
 
@@ -555,7 +573,9 @@ class IfcManager():
             case "IfcVolumetricFlowRateMeasure":
                 unit = self.get_ifc_project_unit_type_assignment("VOLUMETRICFLOWRATEUNIT")
                 symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
-            
+            case "IfcPositiveLengthMeasure":
+                unit = self.get_ifc_project_unit_type_assignment("POSITIVELENGTHUNIT")
+                symbol = self.get_unit_prefix_symbol(unit) + self.get_unit_name_symbol(unit)
             case _:
                 print("Unmanaged measure: ", measure_type)
 
