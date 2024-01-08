@@ -119,6 +119,7 @@ class ArgsManager(object):
         if (len(ignore_ifc_types) > 0):
             ignore_ifc_types = ignore_ifc_types.replace("[", "").replace("]", "").split(",")
             ignore_ifc_types = [file.strip() for file in ignore_ifc_types]
+            ignore_ifc_types = set(ignore_ifc_types)
 
 
         uvs = bool(config["uvs"])

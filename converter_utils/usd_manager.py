@@ -131,14 +131,18 @@ class UsdManager():
         elaborate the UVS and set on top of the relative given mesh.
         """
 
-        uvs_tuple = tuple(
-            uvs[e:e + 2] for e, k in enumerate(uvs) if e % 2 == 0)
+        #uvs_tuple = tuple(
+            #uvs[e:e + 2] for e, k in enumerate(uvs) if e % 2 == 0)
+        
+        uvs_tuples = uvs.reshape(-1, 2)
+        # Convert NumPy array of tuples to a list of tuples
+        vertices_list = [tuple(row) for row in uvs_tuples] 
 
         texCoords = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("st",
                                                             Sdf.ValueTypeNames.TexCoord2fArray,
                                                             UsdGeom.Tokens.faceVarying)
         
-        texCoords.Set(uvs_tuple)
+        texCoords.Set(vertices_list)
 
     def generate_collider(self, mesh_prim):
         # Set the type of collider (in this case, we use 'box')
@@ -147,29 +151,42 @@ class UsdManager():
 
     def generate_mesh_vertices(self, mesh, vertices):
         # from list vertices to tuples of 3 elements
-        vertices_tuple = tuple(
-            vertices[e:e + 3] for e, k in enumerate(vertices) if e % 3 == 0)
+        #vertices_tuple = tuple(
+        #    vertices[e:e + 3] for e, k in enumerate(vertices) if e % 3 == 0)
+
+        vertices_tuples = vertices.reshape(-1, 3)
+        # Convert NumPy array of tuples to a list of tuples
+        vertices_list = [tuple(row) for row in vertices_tuples] 
         
-        mesh.CreatePointsAttr().Set(Vt.Vec3fArray(vertices_tuple))
+        mesh.CreatePointsAttr().Set(Vt.Vec3fArray(vertices_list))
 
     def generate_mesh_normals(self, mesh, normals):
         # from list vertices to tuples of 3 elements
-        vertices_tuple = [tuple(normals[e:e + 3]) for e, k in enumerate(normals) if e % 3 == 0]
+        #vertices_tuple = [tuple(normals[e:e + 3]) for e, k in enumerate(normals) if e % 3 == 0]
+        #normals_primvar = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("normals",
+        #                           Sdf.ValueTypeNames.Normal3fArray,
+        #                           UsdGeom.Tokens.faceVarying)
+
+        normals_tuple = normals.reshape(-1, 3)
         normals_primvar = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("normals",
                                    Sdf.ValueTypeNames.Normal3fArray,
                                    UsdGeom.Tokens.faceVarying)
         
+        normals_list = [tuple(row) for row in normals_tuple] 
+        
 
         UsdGeom.Mesh.CreateSubdivisionSchemeAttr(mesh, "bilinear")
         
-        normals_primvar.Set(Vt.Vec3fArray(vertices_tuple))# Gf.Vec3f(vertices_tuple), [])
+        normals_primvar.Set(Vt.Vec3fArray(normals_list))# vertices_tuple))
 
     def generate_mesh_indices(self, mesh, faces):
         # Set the face indices
-        mesh.CreateFaceVertexIndicesAttr().Set(Vt.IntArray(faces))
+        #mesh.CreateFaceVertexIndicesAttr().Set(Vt.IntArray(faces))
+        mesh.CreateFaceVertexIndicesAttr().Set(Vt.IntArray(faces.tolist())) # using numpy
 
         # Set the number of vertices per face (assuming it's a triangle mesh)
         faces_count = len(faces) / 3
+
         face_vertex_counts = [3] * int(faces_count)
         mesh.CreateFaceVertexCountsAttr().Set(face_vertex_counts)
 
@@ -208,17 +225,9 @@ class UsdManager():
         material_prim_name = self.get_safe_prim_name(material_name)
         material_path = material_container_path + material_prim_name
 
-        print(material_path)
+        #materialPrim = self.stage.GetPrimAtPath(material_path)
 
-        materialPrim = self.stage.GetPrimAtPath(material_path)
-        print(materialPrim.IsValid())
-        #if (materialPrim.IsValid()):
-
-        material = self.get_prim_if_created(material_path)
-        if (material is None):
-            material = UsdShade.Material.Define(self.stage,  material_path)
-        
-
+        material = UsdShade.Material.Define(self.stage,  material_path)
         # Create a new pbr shader for each material
         network = UsdShade.Shader.Define(self.stage, f"{material_path}/PBR_Shader")
         network.CreateIdAttr("UsdPreviewSurface")
@@ -334,6 +343,8 @@ class UsdManager():
 
     def get_safe_prim_name(self, name):
         name = unidecode(name)
+        if (len(name) == 0):
+            name = "undefined"
         if name[0].isdigit():
             name = "m" + name
         name = "/" + re.sub("[^a-zA-Z0-9]", "_", name)

@@ -3,28 +3,36 @@ import ifcopenshell
 import ifcopenshell.geom
 import ifcopenshell.util
 import ifcopenshell.util.element
+import ifcopenshell.util.shape
 
 import multiprocessing
 import os
 import mathutils
+import numpy as np
 
 
-from converter_utils.quantity_sets_class import QuantitySet, QuantityProperty, QuantitySets
+from converter_utils.quantity_sets_class import QuantitySet, QuantityProperty
 from converter_utils.property_sets_class import Property
-from converter_utils import geomery_helper
 from converter_utils import texture_info_class
 
+from converter_utils.timer import Timer
+
 class IfcManager():
-    def __init__(self, ifc_file_path, ifc_types_to_ignore, angular_tolerance, deflection_tolerance, take_textures):
+    def __init__(self, ifc_file_path, ifc_types_to_ignore, angular_tolerance, deflection_tolerance, generate_uvs, take_textures):
 
         print(ifcopenshell.version)
+        self.generate_uvs = generate_uvs
+
         # pass
         self.ifc_file_path = ifc_file_path
         self.ifc_file = self.open_ifc_file(ifc_file_path)
         self.ifc_file_name = os.path.basename(ifc_file_path)
         self.ifc_project = None
 
+        self.use_boolean = len(self.ifc_file.by_type("IfcBooleanResult")) > 0
+
         self.ifc_types_to_ignore = ifc_types_to_ignore
+        self.ignore_ifc_types = len(self.ifc_types_to_ignore) > 0
         self.take_textures = take_textures
 
         self.geometry_settings = self.set_ifc_geometry_settings(
@@ -38,8 +46,8 @@ class IfcManager():
         )
 
         self.geometry_guids_iterated = dict()
+        self.geometry_ids = dict()
 
-        print("openshell v: " + ifcopenshell.version)
 
     def get_ifc_projects(self):
         return self.ifc_file.by_type('IfcProject')
@@ -70,35 +78,38 @@ class IfcManager():
         settings.set_angular_tolerance(angular_tolerance)
         settings.set_deflection_tolerance(deflection_tolerance)
         settings.force_space_transparency(1)
-        settings.precision = 3
+        
+        
         settings.set(settings.USE_WORLD_COORDS, False)
         settings.set(settings.APPLY_DEFAULT_MATERIALS, True)
+        settings.set(settings.DEFAULT_PRECISION, False)
+        settings.precision = 2
 
         # If true don't get normals and uvs
-        settings.set(settings.WELD_VERTICES, False)
-        settings.set(settings.SEW_SHELLS, True)
+        settings.set(settings.WELD_VERTICES, False)#True)
+        settings.set(settings.SEW_SHELLS, False)
         settings.set(settings.CONVERT_BACK_UNITS, False)
         settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, False)
-        settings.set(settings.DISABLE_BOOLEAN_RESULT, False)
+        settings.set(settings.DISABLE_BOOLEAN_RESULT, not self.use_boolean)
         # if include curves, in some case I get the same instance from geom iterator
         # more than once, with different geometry, # workaround is to take the
         # shapes with more vertices, if I exclude, I get colors issue in some cases
-        settings.set(settings.INCLUDE_CURVES, True)
+        settings.set(settings.INCLUDE_CURVES, False)#True)
         settings.set(settings.EXCLUDE_SOLIDS_AND_SURFACES, False)
         # if APPLY_LAYERSETS is false and LAYERSET_FIRST is true, it happened that I can not retrieve the texture, Instead I can get them if set to opposites,
         # TODO: test with other IFC files with textures and TODO maybe manage a new argument for this program in order to let the used decide
-        settings.set(settings.APPLY_LAYERSETS, True) 
-        settings.set(settings.LAYERSET_FIRST, False)
-        settings.set(settings.NO_NORMALS, False)
-        settings.set(settings.GENERATE_UVS, True)
+        settings.set(settings.APPLY_LAYERSETS, False) 
+        settings.set(settings.LAYERSET_FIRST, True)
+        #settings.set(settings.NO_NORMALS, False)
+        settings.set(settings.GENERATE_UVS, self.generate_uvs)
         settings.set(settings.EDGE_ARROWS, False)
         settings.set(settings.SITE_LOCAL_PLACEMENT, True)
         settings.set(settings.BUILDING_LOCAL_PLACEMENT, True)
-        settings.set(settings.BOOLEAN_ATTEMPT_2D, True)
-        settings.set(settings.VALIDATE_QUANTITIES, True)
-        settings.set(settings.NO_WIRE_INTERSECTION_CHECK, False)
-        settings.set(settings.NO_WIRE_INTERSECTION_TOLERANCE, False)
-        settings.set(settings.STRICT_TOLERANCE, True)
+        settings.set(settings.BOOLEAN_ATTEMPT_2D, self.use_boolean)
+        settings.set(settings.VALIDATE_QUANTITIES, False)
+        settings.set(settings.NO_WIRE_INTERSECTION_CHECK, True)
+        settings.set(settings.NO_WIRE_INTERSECTION_TOLERANCE, True)
+        settings.set(settings.STRICT_TOLERANCE, False)
         settings.set(settings.DEBUG_BOOLEAN, False)
 
         return settings
@@ -112,9 +123,10 @@ class IfcManager():
             ifc_file,
             multiprocessing.cpu_count()
         )
+        
         return iterator
 
-    def get_ifc_mesh_info(self, ifc_geometry_iterator):
+    def get_ifc_mesh_info(self):
         """
         Get the necessary mesh information as follows:\n
         guid, ifc_type, faces, verts, matrix, materials, materials_ids, uvs, normals
@@ -122,35 +134,48 @@ class IfcManager():
 
         # Get ifc object
         shape = self.geometry_iterator.get()
+        # Get GUID of ifc object
+        guid = shape.guid
+        ifc_type = shape.product.is_a()
 
-        # print("is a " , self.ifc_file.by_guid(shape.guid).is_a())
+        
+
+        #print(shape.transformation.matrix.data)
+
+        matrix = list(shape.transformation.matrix.data)
+
+        materials = shape.geometry.materials
+        materials_ids = shape.geometry.material_ids
 
         #TODO: create a bool when ifc_manager get initialized instead of check for every mesh if there are types to ignore
-        if len(self.ifc_types_to_ignore) > 0:
+        if self.ignore_ifc_types:
             ifc_type = self.ifc_file.by_guid(shape.guid).is_a()
             if (self.ifc_types_to_ignore.count(ifc_type) > 0):
                 return
 
-        
-        # Get GUID of ifc object
-        guid = shape.guid
+        verts = None
+        normals = None
+        uvs = None
+        faces = None
 
-        faces = shape.geometry.faces
+        if shape.geometry.id in self.geometry_ids:
+            geometry = self.geometry_ids[shape.geometry.id]
+            verts = geometry[0]
+            faces = geometry[1]
+            normals = geometry[2]
+            uvs = geometry[3]
+        else:
+            verts = np.asarray(shape.geometry.verts)
+            faces = np.asarray(shape.geometry.faces)
+            normals = np.asarray(shape.geometry.normals)
+            uvs = np.asarray(shape.geometry.uvs()) if self.generate_uvs else None
+            self.geometry_ids[shape.geometry.id] = (verts, faces, normals, uvs)
 
         if len(faces) == 0:
             #some times it happens that mesh are calculated more than once and have no faces
             return
 
-        verts = shape.geometry.verts
-        normals = shape.geometry.normals
-
-
-
-
-        # test
-        #verts, faces = geomery_helper.weld_mesh(verts, faces)
-
-        if (self.geometry_guids_iterated.get(guid) != None):  
+        if (guid in self.geometry_guids_iterated):  
             print("Found duplicate guid in geometry iterator, probably with different geometry data")
             if len(verts) > len(self.geometry_guids_iterated[guid]):
                 self.geometry_guids_iterated[guid] = verts
@@ -158,14 +183,6 @@ class IfcManager():
                 return
 
         self.geometry_guids_iterated[guid] = verts
-
-        matrix = list(shape.transformation.matrix.data)
-
-        materials = shape.geometry.materials
-        materials_ids = shape.geometry.material_ids
-
-        uvs = shape.geometry.uvs()
-        ifc_type = shape.product.is_a()
 
         ifc_texture_info = {} # 0 ifcIndexedTriangleTextureMap, 1 ifcSurfaceTexture, 2 ifcTextureVertexList, 3 texture coord index list
         
